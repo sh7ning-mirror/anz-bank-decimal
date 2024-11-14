@@ -1,8 +1,11 @@
 package decimal
 
 import (
+	"fmt"
+	"runtime"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -172,7 +175,6 @@ func TestDecimal64MulInf(t *testing.T) {
 }
 
 func checkDecimal64QuoByF(t *testing.T, f int64) {
-	require := require.New(t)
 	for i := int64(-1000 * f); i <= 1000*f; i += f {
 		for j := int64(-100); j <= 100; j++ {
 			var e Decimal64
@@ -194,18 +196,50 @@ func checkDecimal64QuoByF(t *testing.T, f int64) {
 				t.Log("e", e.bits, eFlavor, eSign, eExp, eSignificand)
 				t.Log("q", q.bits, qFlavor, qSign, qExp, qSignificand)
 			}
-			require.Equal(e, q, "%d / %d ≠ %v (expecting %v)", k, j, q, e)
+			if !assert.Equal(t, e, q, "%d / %d ≠ %v (expecting %v)", k, j, q, e) {
+				runtime.Breakpoint()
+				n.Quo(d)
+				t.FailNow()
+			}
 		}
 	}
 }
 
 func TestDecimal64Quo(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip("skipping TestDecimal64Quo in short mode.")
 	}
+
 	checkDecimal64QuoByF(t, 1)
 	checkDecimal64QuoByF(t, 7)
 	checkDecimal64QuoByF(t, 13)
+}
+
+func TestDecimal64Scale(t *testing.T) {
+	t.Parallel()
+
+	const limit = 380
+
+	for i := -limit; i <= limit; i += 3 {
+		x := Pi64.ScaleBInt(i)
+		for j := -limit; j <= limit; j += 5 {
+			y := E64.ScaleBInt(j)
+			expected := "1.155727349790922"
+			exp := i - j
+			switch {
+			case exp == 0:
+			case -383 <= exp && exp <= 384:
+				expected += fmt.Sprintf("e%+d", exp)
+			default:
+				// TODO: subnormals and infinities
+				continue
+			}
+			actual := x.Quo(y).Text('e', -1)
+			require.Equal(t, expected, actual, "i = %v, j = %v", i, j)
+		}
+	}
 }
 
 func TestDecimal64QuoNaN(t *testing.T) {
@@ -242,13 +276,13 @@ func TestDecimal64QuoInf(t *testing.T) {
 
 func TestDecimal64MulPo10(t *testing.T) {
 	r := require.New(t)
-	for i, u := range powersOf10U128 {
-		for j, v := range powersOf10U128 {
+	for i, u := range tenToThe128 {
+		for j, v := range tenToThe128 {
 			k := i + j
-			if !(k < len(powersOf10U128)) {
+			if !(k < len(tenToThe128)) {
 				continue
 			}
-			w := powersOf10U128[k]
+			w := tenToThe128[k]
 			if !(w.hi == 0 && w.lo < decimal64Base) {
 				continue
 			}
@@ -292,6 +326,110 @@ func TestDecimal64Sub(t *testing.T) {
 		func(a, b Decimal64) Decimal64 { return a.Sub(b) },
 		"-",
 	)
+}
+
+func rnd(ctx Context64, x, y uint64) uint64 {
+	ans, _ := ctx.round(x, y)
+	return ans
+}
+
+func TestRoundHalfUp(t *testing.T) {
+	t.Parallel()
+
+	ctx := Context64{Rounding: HalfUp}
+	assert.Equal(t, uint64(10), rnd(ctx, 10, 1))
+	assert.Equal(t, uint64(10), rnd(ctx, 11, 1))
+	assert.Equal(t, uint64(20), rnd(ctx, 15, 1))
+	assert.Equal(t, uint64(20), rnd(ctx, 19, 1))
+	assert.Equal(t, uint64(200), rnd(ctx, 249, 10))
+	assert.Equal(t, uint64(300), rnd(ctx, 250, 10))
+	assert.Equal(t, uint64(300), rnd(ctx, 251, 10))
+	assert.Equal(t, uint64(300), rnd(ctx, 299, 10))
+	assert.Equal(t, uint64(300), rnd(ctx, 300, 10))
+	assert.Equal(t, uint64(1000000000000000), rnd(ctx, 1000000000000000, 100000000000000))
+	assert.Equal(t, uint64(1000000000000000), rnd(ctx, 1100000000000000, 100000000000000))
+	assert.Equal(t, uint64(1000000000000000), rnd(ctx, 1499999999999999, 100000000000000))
+	assert.Equal(t, uint64(2000000000000000), rnd(ctx, 1500000000000000, 100000000000000))
+	assert.Equal(t, uint64(2000000000000000), rnd(ctx, 1500000000000001, 100000000000000))
+	assert.Equal(t, uint64(2000000000000000), rnd(ctx, 1900000000000000, 100000000000000))
+	assert.Equal(t, uint64(2000000000000000), rnd(ctx, 1999999999999999, 100000000000000))
+	assert.Equal(t, uint64(2000000000000000), rnd(ctx, 2000000000000000, 100000000000000))
+	assert.Equal(t, uint64(2000000000000000), rnd(ctx, 2499999999999999, 100000000000000))
+	assert.Equal(t, uint64(3000000000000000), rnd(ctx, 2500000000000000, 100000000000000))
+	assert.Equal(t, uint64(3000000000000000), rnd(ctx, 2500000000000001, 100000000000000))
+	assert.Equal(t, uint64(3000000000000000), rnd(ctx, 2999999999999999, 100000000000000))
+	assert.Equal(t, uint64(3000000000000000), rnd(ctx, 3000000000000000, 100000000000000))
+}
+
+func TestRoundHalfEven(t *testing.T) {
+	t.Parallel()
+
+	ctx := Context64{Rounding: HalfEven}
+	assert.Equal(t, uint64(10), rnd(ctx, 10, 1))
+	assert.Equal(t, uint64(10), rnd(ctx, 11, 1))
+	assert.Equal(t, uint64(20), rnd(ctx, 15, 1))
+	assert.Equal(t, uint64(20), rnd(ctx, 19, 1))
+	assert.Equal(t, uint64(200), rnd(ctx, 249, 10))
+	assert.Equal(t, uint64(200), rnd(ctx, 250, 10))
+	assert.Equal(t, uint64(300), rnd(ctx, 251, 10))
+	assert.Equal(t, uint64(300), rnd(ctx, 299, 10))
+	assert.Equal(t, uint64(300), rnd(ctx, 300, 10))
+	assert.Equal(t, uint64(1000000000000000), rnd(ctx, 1000000000000000, 100000000000000))
+	assert.Equal(t, uint64(1000000000000000), rnd(ctx, 1100000000000000, 100000000000000))
+	assert.Equal(t, uint64(1000000000000000), rnd(ctx, 1499999999999999, 100000000000000))
+	assert.Equal(t, uint64(2000000000000000), rnd(ctx, 1500000000000000, 100000000000000))
+	assert.Equal(t, uint64(2000000000000000), rnd(ctx, 1500000000000001, 100000000000000))
+	assert.Equal(t, uint64(2000000000000000), rnd(ctx, 1900000000000000, 100000000000000))
+	assert.Equal(t, uint64(2000000000000000), rnd(ctx, 1999999999999999, 100000000000000))
+	assert.Equal(t, uint64(2000000000000000), rnd(ctx, 2000000000000000, 100000000000000))
+	assert.Equal(t, uint64(2000000000000000), rnd(ctx, 2499999999999999, 100000000000000))
+	assert.Equal(t, uint64(2000000000000000), rnd(ctx, 2500000000000000, 100000000000000))
+	assert.Equal(t, uint64(3000000000000000), rnd(ctx, 2500000000000001, 100000000000000))
+	assert.Equal(t, uint64(3000000000000000), rnd(ctx, 2999999999999999, 100000000000000))
+	assert.Equal(t, uint64(3000000000000000), rnd(ctx, 3000000000000000, 100000000000000))
+}
+
+func TestRoundHDown(t *testing.T) {
+	t.Parallel()
+
+	ctx := Context64{Rounding: Down}
+	assert.Equal(t, uint64(10), rnd(ctx, 10, 1))
+	assert.Equal(t, uint64(10), rnd(ctx, 11, 1))
+	assert.Equal(t, uint64(10), rnd(ctx, 15, 1))
+	assert.Equal(t, uint64(10), rnd(ctx, 19, 1))
+	assert.Equal(t, uint64(200), rnd(ctx, 249, 10))
+	assert.Equal(t, uint64(200), rnd(ctx, 250, 10))
+	assert.Equal(t, uint64(200), rnd(ctx, 251, 10))
+	assert.Equal(t, uint64(200), rnd(ctx, 299, 10))
+	assert.Equal(t, uint64(300), rnd(ctx, 300, 10))
+	assert.Equal(t, uint64(1000000000000000), rnd(ctx, 1000000000000000, 100000000000000))
+	assert.Equal(t, uint64(1000000000000000), rnd(ctx, 1100000000000000, 100000000000000))
+	assert.Equal(t, uint64(1000000000000000), rnd(ctx, 1499999999999999, 100000000000000))
+	assert.Equal(t, uint64(1000000000000000), rnd(ctx, 1500000000000000, 100000000000000))
+	assert.Equal(t, uint64(1000000000000000), rnd(ctx, 1500000000000001, 100000000000000))
+	assert.Equal(t, uint64(1000000000000000), rnd(ctx, 1900000000000000, 100000000000000))
+	assert.Equal(t, uint64(1000000000000000), rnd(ctx, 1999999999999999, 100000000000000))
+	assert.Equal(t, uint64(2000000000000000), rnd(ctx, 2000000000000000, 100000000000000))
+	assert.Equal(t, uint64(2000000000000000), rnd(ctx, 2499999999999999, 100000000000000))
+	assert.Equal(t, uint64(2000000000000000), rnd(ctx, 2500000000000000, 100000000000000))
+	assert.Equal(t, uint64(2000000000000000), rnd(ctx, 2500000000000001, 100000000000000))
+	assert.Equal(t, uint64(2000000000000000), rnd(ctx, 2999999999999999, 100000000000000))
+	assert.Equal(t, uint64(3000000000000000), rnd(ctx, 3000000000000000, 100000000000000))
+}
+
+func TestToIntegral(t *testing.T) {
+	t.Parallel()
+
+	ctx := Context64{Rounding: HalfUp}
+	assert.Equal(t, "0", ctx.ToIntegral(MustParse64("0")).String())
+	assert.Equal(t, "0", ctx.ToIntegral(MustParse64("0.499999999999999")).String())
+	assert.Equal(t, "1", ctx.ToIntegral(MustParse64("1")).String())
+	assert.Equal(t, "1", ctx.ToIntegral(MustParse64("1.49999999999999")).String())
+	assert.Equal(t, "2", ctx.ToIntegral(MustParse64("1.5")).String())
+	assert.Equal(t, "9", ctx.ToIntegral(MustParse64("9.49999999999999")).String())
+	assert.Equal(t, "10", ctx.ToIntegral(MustParse64("9.5")).String())
+	assert.Equal(t, "99", ctx.ToIntegral(MustParse64("99.499999999999")).String())
+	assert.Equal(t, "100", ctx.ToIntegral(MustParse64("99.5")).String())
 }
 
 func benchmarkDecimal64Data() []Decimal64 {
@@ -373,13 +511,20 @@ func TestAddOverflow(t *testing.T) {
 }
 
 func TestQuoOverflow(t *testing.T) {
-	require := require.New(t)
-	require.Equal(Infinity64, MustParse64("1e384").Quo(MustParse64(".01")))
-	require.Equal(NegInfinity64, MustParse64("1e384").Quo(MustParse64("-.01")))
-	require.Equal(NegInfinity64, MustParse64("-1e384").Quo(MustParse64(".01")))
-	require.Equal(NegInfinity64, MustParse64("-1e384").Quo(MustParse64("0")))
-	require.Equal(QNaN64, Zero64.Quo(Zero64))
-	require.Equal(Zero64, Zero64.Quo(MustParse64("100")))
+	test := func(expected Decimal64, num, denom string) {
+		n := MustParse64(num)
+		d := MustParse64(denom)
+		if !assert.Equal(t, expected, n.Quo(d)) {
+			runtime.Breakpoint()
+			n.Quo(d)
+		}
+	}
+	test(Infinity64, "1e384", ".01")
+	test(NegInfinity64, "1e384", "-.01")
+	test(NegInfinity64, "-1e384", ".01")
+	test(NegInfinity64, "-1e384", "0")
+	test(QNaN64, "0", "0")
+	test(Zero64, "0", "100")
 }
 
 func TestMul(t *testing.T) {
